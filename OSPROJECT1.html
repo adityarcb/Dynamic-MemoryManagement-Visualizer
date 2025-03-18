@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Memory Management Visualizer</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { margin: 20px; padding: 20px; border: 1px solid #ccc; }
+        .tabs { display: flex; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; cursor: pointer; border: 1px solid #ccc; }
+        .active-tab { background-color: #f0f0f0; }
+        .simulation-section { display: none; }
+        .visible { display: block; }
+        .memory-visualization { display: flex; flex-wrap: wrap; gap: 5px; margin: 10px 0; }
+        .frame, .segment-block { border: 1px solid #000; padding: 5px; text-align: center; }
+        .frame { width: 80px; height: 60px; }
+        .free { background-color: #e0e0e0; }
+        .hit { background-color: #90EE90; }
+        .fault { background-color: #FFB6C1; }
+        .highlight { background-color: #FFD700 !important; }
+        .replacing { background-color: #FF6347 !important; }
+        .loading { background-color: #90EE90 !important; }
+        .error { color: red; margin: 5px 0; }
+        .step-details { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
+        .memory-map { display: flex; flex-direction: column; gap: 2px; }
+        .animation { transition: all 0.5s ease; }
+        .segment-controls { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Memory Management Visualizer</h1>
+    
+    <div class="tabs">
+        <div class="tab active-tab" onclick="showTab('paging')">Paging</div>
+        <div class="tab" onclick="showTab('segmentation')">Segmentation</div>
+        <div class="tab" onclick="showTab('virtual')">Virtual Memory</div>
+    </div>
+
+    <!-- Paging Section -->
+    <div id="paging" class="simulation-section visible">
+        <h2>Paging Simulation</h2>
+        <div>
+            <label>Physical Memory (KB): <input type="number" id="physMem" value="64"></label>
+            <label>Page Size (KB): <input type="number" id="pageSize" value="4"></label>
+            <button onclick="initPaging()">Initialize</button>
+        </div>
+        <div id="pagingResults"></div>
+    </div>
+
+    <!-- Segmentation Section -->
+    <div id="segmentation" class="simulation-section">
+        <h2>Segmentation Simulation</h2>
+        <div>
+            <label>Memory Size (KB): <input type="number" id="segMemory" value="128"></label>
+            <button onclick="initSegmentation()">Initialize</button>
+        </div>
+        <div class="segment-controls" id="segmentationControls"></div>
+        <div id="segmentationResults"></div>
+    </div>
+
+    <!-- Virtual Memory Section -->
+    <div id="virtual" class="simulation-section">
+        <h2>Virtual Memory Simulation</h2>
+        <div>
+            <label>Frames: <input type="number" id="numFrames" value="3"></label>
+            <select id="algorithm">
+                <option>FIFO</option>
+                <option>LRU</option>
+            </select>
+            <label>Reference String: <input type="text" id="refString" value="1,2,3,4,1,2,5,1,2,3,4,5"></label>
+            <button onclick="startVirtualSimulation()">Start Simulation</button>
+        </div>
+        <div id="virtualResults"></div>
+    </div>
+
+    <script>
+        // Tab navigation
+        function showTab(tabName) {
+            document.querySelectorAll('.simulation-section').forEach(div => 
+                div.classList.remove('visible'));
+            document.querySelectorAll('.tab').forEach(tab => 
+                tab.classList.remove('active-tab'));
+            document.getElementById(tabName).classList.add('visible');
+            event.target.classList.add('active-tab');
+        }
+
+        // Common validation functions
+        function validatePositiveNumber(value, fieldName) {
+            if (!value || isNaN(value) || value <= 0) {
+                showError(`${fieldName} must be a positive number`);
+                return false;
+            }
+            return true;
+        }
+
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            document.body.appendChild(errorDiv);
+            setTimeout(() => errorDiv.remove(), 3000);
+        }
+
+        // Paging Simulation
+        function initPaging() {
+            const physMem = parseInt(document.getElementById('physMem').value);
+            const pageSize = parseInt(document.getElementById('pageSize').value);
+            
+            if (!validatePositiveNumber(physMem, "Physical memory")) return;
+            if (!validatePositiveNumber(pageSize, "Page size")) return;
+            
+            const numFrames = Math.floor(physMem / pageSize);
+            let html = `<h3>${numFrames} Frames Available</h3>`;
+            html += `<div class="memory-visualization">`;
+            for(let i = 0; i < numFrames; i++) {
+                html += `<div class="frame free animation" id="frame-${i}">${i}<br>Free</div>`;
+            }
+            html += `</div>`;
+            document.getElementById('pagingResults').innerHTML = html;
+        }
+
+        // Segmentation Simulation
+        let segmentationMemory = [];
+
+        function initSegmentation() {
+            const memorySize = parseInt(document.getElementById('segMemory').value);
+            if (!validatePositiveNumber(memorySize, "Memory size")) return;
+            
+            segmentationMemory = [{ start: 0, end: memorySize, type: 'Free' }];
+            
+            const controlsHTML = `
+                <div>
+                    <input type="text" id="segProcess" placeholder="Process">
+                    <input type="text" id="segName" placeholder="Segment">
+                    <input type="number" id="segSize" placeholder="Size (KB)">
+                    <button onclick="allocateSegment()">Allocate</button>
+                    <button onclick="deallocateSegment()">Deallocate</button>
+                </div>
+                <div class="memory-visualization" id="segMemoryVis"></div>
+            `;
+            document.getElementById('segmentationControls').innerHTML = controlsHTML;
+            updateSegmentationVisualization();
+        }
+
+        function allocateSegment() {
+            const process = document.getElementById('segProcess').value;
+            const name = document.getElementById('segName').value;
+            const size = parseInt(document.getElementById('segSize').value);
+            
+            if (!process || !name || !size) {
+                showError("All fields required for allocation");
+                return;
+            }
+            
+            for (let i = 0; i < segmentationMemory.length; i++) {
+                const block = segmentationMemory[i];
+                if (block.type === 'Free' && (block.end - block.start) >= size) {
+                    const newBlock = {
+                        start: block.start,
+                        end: block.start + size,
+                        type: `${process}:${name}`
+                    };
+                    
+                    segmentationMemory.splice(i, 1, newBlock);
+                    if (block.end - newBlock.end > 0) {
+                        segmentationMemory.splice(i + 1, 0, {
+                            start: newBlock.end,
+                            end: block.end,
+                            type: 'Free'
+                        });
+                    }
+                    updateSegmentationVisualization();
+                    return;
+                }
+            }
+            showError("Not enough contiguous memory");
+        }
+
+        function deallocateSegment() {
+            const process = document.getElementById('segProcess').value;
+            const name = document.getElementById('segName').value;
+            const segType = `${process}:${name}`;
+            
+            let found = false;
+            for (let i = 0; i < segmentationMemory.length; i++) {
+                if (segmentationMemory[i].type === segType) {
+                    segmentationMemory[i].type = 'Free';
+                    // Merge adjacent free blocks
+                    if (i > 0 && segmentationMemory[i-1].type === 'Free') {
+                        segmentationMemory[i-1].end = segmentationMemory[i].end;
+                        segmentationMemory.splice(i, 1);
+                        i--;
+                    }
+                    if (i < segmentationMemory.length-1 && segmentationMemory[i+1].type === 'Free') {
+                        segmentationMemory[i].end = segmentationMemory[i+1].end;
+                        segmentationMemory.splice(i+1, 1);
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) showError("Segment not found");
+            updateSegmentationVisualization();
+        }
+
+        function updateSegmentationVisualization() {
+            const vis = document.getElementById('segMemoryVis');
+            vis.innerHTML = '';
+            segmentationMemory.forEach(block => {
+                const blockDiv = document.createElement('div');
+                blockDiv.className = `segment-block animation ${block.type === 'Free' ? 'free' : ''}`;
+                blockDiv.style.width = `${(block.end - block.start) * 2}px`;
+                blockDiv.innerHTML = `
+                    ${block.type}<br>
+                    ${block.start}KB-${block.end}KB<br>
+                    Size: ${block.end - block.start}KB
+                `;
+                vis.appendChild(blockDiv);
+            });
+        }
+
+        // Virtual Memory Simulation
+        async function startVirtualSimulation() {
+            const numFrames = parseInt(document.getElementById('numFrames').value);
+            const algorithm = document.getElementById('algorithm').value;
+            const refString = document.getElementById('refString').value;
+            
+            if (!validatePositiveNumber(numFrames, "Number of frames")) return;
+            if (!/^(\d+,)*\d+$/.test(refString)) {
+                showError("Invalid reference string format");
+                return;
+            }
+            
+            const pages = refString.split(',').map(Number);
+            const resultsDiv = document.getElementById('virtualResults');
+            resultsDiv.innerHTML = '';
+            
+            let frames = Array(numFrames).fill(null);
+            let pageTable = {};
+            let loadTimes = {};
+            let accessTimes = {};
+            let pageFaults = 0;
+            
+            // Initialize visualization
+            const memVis = document.createElement('div');
+            memVis.className = 'memory-visualization';
+            frames.forEach((_, i) => {
+                const frame = document.createElement('div');
+                frame.className = 'frame free animation';
+                frame.innerHTML = `Frame ${i}<br>Empty`;
+                memVis.appendChild(frame);
+            });
+            resultsDiv.appendChild(memVis);
+
+            for (const [step, page] of pages.entries()) {
+                const stepDiv = document.createElement('div');
+                stepDiv.className = 'step-details';
+                stepDiv.innerHTML = `<strong>Step ${step + 1}:</strong> Accessing page ${page}`;
+                resultsDiv.appendChild(stepDiv);
+
+                let description = '';
+                let isFault = false;
+
+                if (!(page in pageTable)) {
+                    pageFaults++;
+                    isFault = true;
+                    description = `Page fault - `;
+                    
+                    if (frames.includes(null)) {
+                        const freeFrame = frames.indexOf(null);
+                        description += `Loaded into frame ${freeFrame}`;
+                        await animateFrame(freeFrame, page, 'loading');
+                        frames[freeFrame] = page;
+                        pageTable[page] = freeFrame;
+                    } else {
+                        const victim = algorithm === 'FIFO' 
+                            ? frames.reduce((a, b) => loadTimes[a] < loadTimes[b] ? a : b)
+                            : frames.reduce((a, b) => accessTimes[a] < accessTimes[b] ? a : b);
+                        
+                        const victimFrame = frames.indexOf(victim);
+                        description += `Replaced page ${victim} in frame ${victimFrame}`;
+                        
+                        await animateFrame(victimFrame, victim, 'replacing');
+                        delete pageTable[victim];
+                        await animateFrame(victimFrame, page, 'loading');
+                        
+                        frames[victimFrame] = page;
+                        pageTable[page] = victimFrame;
+                    }
+                    loadTimes[page] = step;
+                } else {
+                    description = `Page hit in frame ${pageTable[page]}`;
+                    await highlightFrame(pageTable[page]);
+                }
+
+                accessTimes[page] = step;
+                stepDiv.innerHTML += `<br>${description}`;
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            resultsDiv.innerHTML += `<h3>Total Page Faults: ${pageFaults}</h3>`;
+        }
+
+        async function animateFrame(frameIndex, page, state) {
+            const frame = document.getElementsByClassName('frame')[frameIndex];
+            frame.classList.add(state);
+            frame.innerHTML = `Frame ${frameIndex}<br>${page}`;
+            await new Promise(resolve => setTimeout(resolve, 500));
+            frame.classList.remove(state);
+        }
+
+        async function highlightFrame(frameIndex) {
+            const frame = document.getElementsByClassName('frame')[frameIndex];
+            frame.classList.add('highlight');
+            await new Promise(resolve => setTimeout(resolve, 500));
+            frame.classList.remove('highlight');
+        }
+    </script>
+</body>
+</html>
